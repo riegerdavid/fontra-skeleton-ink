@@ -1,266 +1,155 @@
-import { BaseTool } from "fontra/editor/edit-tools-base.js";
-import { VarPackedPath } from "fontra/core/var-path.js";
-import Panel from "fontra/editor/panel.js";
-import { div, button, label, input, select, option } from "fontra/core/html-utils.js";
+// Skeleton Ink: dependency-free Fontra plugin entry point.
+// Uses Fontra's editor instance directly, avoiding unavailable /editor and /core imports.
 
-const NS = "http://www.w3.org/2000/svg";
-const fmt = (n) => Number(n.toFixed(2));
+const settings = { style: "broad", width: 70, angle: 35, contrast: 0.7 };
 
-function pointsToOutline(points, width, angleDeg, contrast, style) {
+function outlineFor(points) {
   if (points.length < 2) return [];
-  const angle = angleDeg * Math.PI / 180;
-  const nibX = Math.cos(angle), nibY = Math.sin(angle);
+  const a = settings.angle * Math.PI / 180;
+  const nib = { x: Math.cos(a), y: Math.sin(a) };
   const left = [], right = [];
   for (let i = 0; i < points.length; i++) {
-    const p = points[i];
-    const prev = points[Math.max(0, i - 1)];
+    const p = points[i], prev = points[Math.max(0, i - 1)];
     const next = points[Math.min(points.length - 1, i + 1)];
     let dx = next.x - prev.x, dy = next.y - prev.y;
-    const len = Math.hypot(dx, dy) || 1;
-    dx /= len; dy /= len;
+    const length = Math.hypot(dx, dy) || 1;
+    dx /= length; dy /= length;
     const nx = -dy, ny = dx;
-    const projection = Math.abs(nx * nibX + ny * nibY);
-    let localWidth = width;
-    if (style === "broad") localWidth = width * (0.22 + 0.78 * projection);
-    else if (style === "pointed") localWidth = width * (0.08 + 0.92 * Math.pow(projection, 1.4));
-    else if (style === "brush") {
-      localWidth = width * (0.35 + 0.65 * projection) *
-        (0.7 + 0.3 * Math.sin(i / Math.max(1, points.length - 1) * Math.PI));
-    }
-    localWidth *= 1 + contrast * (projection - 0.5);
-    const half = Math.max(0.5, localWidth / 2);
-    left.push({ x: p.x + nx * half, y: p.y + ny * half });
-    right.push({ x: p.x - nx * half, y: p.y - ny * half });
+    const projection = Math.abs(nx * nib.x + ny * nib.y);
+    let width = settings.width;
+    if (settings.style === "broad") width *= 0.22 + 0.78 * projection;
+    if (settings.style === "pointed") width *= 0.08 + 0.92 * Math.pow(projection, 1.4);
+    if (settings.style === "brush") width *= (0.35 + 0.65 * projection) *
+      (0.7 + 0.3 * Math.sin(i / Math.max(1, points.length - 1) * Math.PI));
+    width *= 1 + settings.contrast * (projection - 0.5);
+    const half = Math.max(0.5, width / 2);
+    left.push({ x: Math.round(p.x + nx * half), y: Math.round(p.y + ny * half) });
+    right.push({ x: Math.round(p.x - nx * half), y: Math.round(p.y - ny * half) });
   }
-  return [...left, ...right.reverse()];
+  return left.concat(right.reverse());
 }
 
-function pathData(points) {
-  if (!points.length) return "";
-  return `M ${fmt(points[0].x)} ${fmt(points[0].y)} ` +
-    points.slice(1).map(p => `L ${fmt(p.x)} ${fmt(p.y)}`).join(" ") + " Z";
-}
-
-class SkeletonInkPanel extends Panel {
-  identifier = "skeleton-ink-panel";
-  iconPath = "";
-
-  static styles = `
-    .skeleton-ink { display:flex; flex-direction:column; gap:10px; padding:10px; box-sizing:border-box; height:100%; overflow:auto; }
-    .si-title { font-weight:700; font-size:1.05em; }
-    .si-controls { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-    .si-controls label { display:flex; flex-direction:column; gap:4px; font-size:.9em; }
-    .si-controls input, .si-controls select { width:100%; min-width:0; box-sizing:border-box; }
-    .si-actions { display:flex; flex-wrap:wrap; gap:6px; }
-    .si-canvas-wrap { min-height:220px; height:42vh; border:1px solid var(--panel-border-color,#888); border-radius:6px; overflow:hidden; background:var(--canvas-background-color,#f8f8f8); }
-    .si-canvas { width:100%; height:100%; touch-action:none; display:block; }
-    .si-note { font-size:.82em; opacity:.75; line-height:1.35; }
-  `;
-
-  constructor(editorController) {
-    super(editorController);
-  }
-
-  getContentElement() {
-    // Panel's super() invokes getContentElement() before this constructor runs.
-    // Initialize state here so the panel and tool can load successfully.
-    this.strokes = [];
-    this.active = null;
-    this.settings = { style:"broad", width:80, angle:35, contrast:0.7 };
-    const styleSelect = select({ onchange:e=>{ this.settings.style=e.target.value; this.render(); } }, [
-      option({ value:"broad", selected:true }, ["Broad nib"]),
-      option({ value:"pointed" }, ["Pointed pen"]),
-      option({ value:"brush" }, ["Brush"])
-    ]);
-    this.widthInput = input({ type:"range", min:2, max:240, value:this.settings.width,
-      oninput:e=>{ this.settings.width=+e.target.value; this.widthValue.textContent=e.target.value; this.render(); } });
-    this.angleInput = input({ type:"range", min:0, max:180, value:this.settings.angle,
-      oninput:e=>{ this.settings.angle=+e.target.value; this.angleValue.textContent=e.target.value+"°"; this.render(); } });
-    this.contrastInput = input({ type:"range", min:0, max:1.5, step:.05, value:this.settings.contrast,
-      oninput:e=>{ this.settings.contrast=+e.target.value; this.contrastValue.textContent=(+e.target.value).toFixed(2); this.render(); } });
-    this.widthValue = div({}, [String(this.settings.width)]);
-    this.angleValue = div({}, [this.settings.angle+"°"]);
-    this.contrastValue = div({}, [this.settings.contrast.toFixed(2)]);
-    this.canvas = document.createElement("canvas");
-    this.canvas.className = "si-canvas";
-    this.canvasWrap = div({ class:"si-canvas-wrap" }, [this.canvas]);
-    this.canvas.addEventListener("pointerdown", e=>this.pointerDown(e));
-    this.canvas.addEventListener("pointermove", e=>this.pointerMove(e));
-    this.canvas.addEventListener("pointerup", ()=>this.pointerUp());
-    this.canvas.addEventListener("pointercancel", ()=>this.pointerUp());
-    const controls = div({ class:"si-controls" }, [
-      label({}, ["Tool", styleSelect]),
-      label({}, ["Width", this.widthInput, this.widthValue]),
-      label({}, ["Nib angle", this.angleInput, this.angleValue]),
-      label({}, ["Contrast", this.contrastInput, this.contrastValue])
-    ]);
-    const actions = div({ class:"si-actions" }, [
-      button({ type:"button", onclick:()=>{ this.strokes.pop(); this.render(); } }, ["Undo"]),
-      button({ type:"button", onclick:()=>{ this.strokes=[]; this.render(); } }, ["Clear"]),
-      button({ type:"button", onclick:()=>this.exportSVG() }, ["Export SVG"])
-    ]);
-    this.status = div({ class:"si-note" }, ["Draw a centerline on the canvas, then export the generated outline as SVG."]);
-    const root = div({ class:"skeleton-ink" }, [
-      div({ class:"si-title" }, ["Skeleton Ink"]),
-      controls, this.canvasWrap, actions, this.status
-    ]);
-    requestAnimationFrame(()=>this.resizeCanvas());
-    return root;
-  }
-
-  resizeCanvas() {
-    const rect = this.canvasWrap.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.max(1, Math.round(rect.width*dpr));
-    this.canvas.height = Math.max(1, Math.round(rect.height*dpr));
-    this.ctx = this.canvas.getContext("2d");
-    this.ctx.setTransform(dpr,0,0,dpr,0,0);
-    this.render();
-  }
-
-  localPoint(e) {
-    const r = this.canvas.getBoundingClientRect();
-    return { x:e.clientX-r.left, y:e.clientY-r.top };
-  }
-  pointerDown(e) {
-    e.preventDefault();
-    this.canvas.setPointerCapture(e.pointerId);
-    this.active = { points:[this.localPoint(e)], settings:{ ...this.settings } };
-    this.strokes.push(this.active);
-    this.render();
-  }
-  pointerMove(e) {
-    if (!this.active) return;
-    const p = this.localPoint(e), last = this.active.points.at(-1);
-    if (Math.hypot(p.x-last.x,p.y-last.y)>1.5) this.active.points.push(p);
-    this.render();
-  }
-  pointerUp() {
-    if (!this.active) return;
-    if (this.active.points.length===1) {
-      this.active.points.push({ ...this.active.points[0], x:this.active.points[0].x+1 });
-    }
-    this.active=null;
-    this.render();
-  }
-  render() {
-    if (!this.ctx) return;
-    const ctx=this.ctx, w=this.canvas.clientWidth, h=this.canvas.clientHeight;
-    ctx.clearRect(0,0,w,h);
-    ctx.fillStyle="#f8f8f8";
-    ctx.fillRect(0,0,w,h);
-    ctx.save();
-    ctx.strokeStyle="#999"; ctx.lineWidth=1; ctx.globalAlpha=.22;
-    for (let x=0;x<w;x+=20) { ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke(); }
-    for (let y=0;y<h;y+=20) { ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke(); }
-    ctx.restore();
-    for (const stroke of this.strokes) {
-      const s=stroke.settings;
-      const outline=pointsToOutline(stroke.points,s.width,s.angle,s.contrast,s.style);
-      if (outline.length) {
-        ctx.beginPath();ctx.moveTo(outline[0].x,outline[0].y);
-        outline.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));
-        ctx.closePath();ctx.fillStyle="#171717";ctx.fill();
-      }
-      ctx.beginPath();ctx.moveTo(stroke.points[0].x,stroke.points[0].y);
-      stroke.points.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));
-      ctx.strokeStyle="#d14b35";ctx.lineWidth=1;
-      ctx.setLineDash([4,4]);ctx.stroke();ctx.setLineDash([]);
-    }
-  }
-  exportSVG() {
-    const w=this.canvas.clientWidth,h=this.canvas.clientHeight;
-    const paths=this.strokes.map(stroke=>{
-      const s=stroke.settings;
-      return pathData(pointsToOutline(stroke.points,s.width,s.angle,s.contrast,s.style));
-    }).filter(Boolean);
-    const svg=`<svg xmlns="${NS}" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${paths.map(d=>`<path d="${d}" fill="#000"/>`).join("")}</svg>`;
-    const url=URL.createObjectURL(new Blob([svg],{ type:"image/svg+xml" }));
-    const a=document.createElement("a");
-    a.href=url;a.download="skeleton-ink.svg";a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
-    this.status.textContent="SVG exported. Direct insertion into the active glyph is not implemented.";
-  }
-}
-
-
-/**
- * Draw directly into a Fontra glyph using Fontra's own tool interface.
- * A single drag produces an editable, closed outline contour in the active glyph.
- * The committed outline participates in Fontra selection, undo, and point tools.
- */
-class SkeletonInkTool extends BaseTool {
+// Fontra's native tool interface. Written without importing internal bundled modules.
+class SkeletonInkTool {
   identifier = "skeleton-ink-tool";
-  iconPath = "";
-
-  constructor(editor, settings) {
-    super(editor);
-    this.settings = settings;
+  isActive = false;
+  constructor(editor, iconPath) {
+    this.editor = editor;
+    this.iconPath = iconPath;
+    this.canvasController = editor.canvasController;
+    this.sceneController = editor.sceneController;
+    this.sceneModel = this.sceneController.sceneModel;
   }
-
   setCursor() {
     this.canvasController.canvas.style.cursor =
       this.sceneModel.selectedGlyph?.isEditing ? "crosshair" : "default";
   }
-
-  handleHover(event) {
-    if (!this.sceneModel.selectedGlyph?.isEditing) {
-      this.editor.tools["pointer-tool"].handleHover(event);
-      return;
-    }
-    this.setCursor();
-  }
+  activate() { this.isActive = true; this.setCursor(); }
+  deactivate() { this.isActive = false; }
+  handleHover(event) { this.setCursor(); }
+  handleKeyDown(event) {}
 
   async handleDrag(eventStream, initialEvent) {
-    if (!this.sceneModel.selectedGlyph?.isEditing) {
-      await this.editor.tools["pointer-tool"].handleDrag(eventStream, initialEvent);
-      return;
-    }
-    const first = this.sceneController.selectedGlyphPoint(initialEvent);
-    if (!Number.isFinite(first?.x) || !Number.isFinite(first?.y)) return;
-
-    const points = [first];
+    if (!this.sceneModel.selectedGlyph?.isEditing) return;
+    const start = this.sceneController.selectedGlyphPoint(initialEvent);
+    if (!Number.isFinite(start?.x) || !Number.isFinite(start?.y)) return;
+    const points = [start];
     for await (const event of eventStream) {
       const p = this.sceneController.selectedGlyphPoint(event);
       if (!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
-      const previous = points[points.length - 1];
-      if (Math.hypot(p.x - previous.x, p.y - previous.y) >= 2) points.push(p);
+      const last = points[points.length - 1];
+      if (Math.hypot(p.x - last.x, p.y - last.y) >= 3) points.push(p);
     }
     if (points.length < 2) return;
+    const outline = outlineFor(points);
+    if (outline.length < 4) return;
 
-    const { width, angle, contrast, style } = { ...this.settings };
-    const contourPoints = pointsToOutline(points, width, angle, contrast, style);
-    if (contourPoints.length < 4) return;
-    const path = VarPackedPath.fromUnpackedContours([
-      { points: contourPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })),
-        isClosed: true }
-    ]);
-
-    await this.sceneController.editGlyphAndRecordChanges(
-      glyph => {
-        const layers = this.sceneController.getEditingLayerFromGlyphLayers(glyph.layers);
-        const firstLayer = Object.values(layers)[0];
-        if (!firstLayer) return;
-        const start = firstLayer.path.numPoints;
-        this.sceneController.selection = new Set(
-          contourPoints.map((_, i) => `point/${start + i}`)
-        );
-        for (const layer of Object.values(layers)) layer.path.appendPath(path);
-        return "Draw Skeleton Ink outline";
-      },
-      undefined,
-      true
-    );
+    // Editing the glyph path through Fontra's edit transaction, ensuring native undo.
+    await this.sceneController.editGlyphAndRecordChanges((glyph) => {
+      const layers = this.sceneController.getEditingLayerFromGlyphLayers(glyph.layers);
+      const first = Object.values(layers)[0];
+      if (!first) return;
+      const firstIndex = first.path.numPoints;
+      this.sceneController.selection = new Set(outline.map((_, i) => "point/" + (firstIndex + i)));
+      for (const layer of Object.values(layers)) {
+        // Native VarPackedPath supports appendUnpackedContour, so we do not need to import it.
+        layer.path.appendUnpackedContour({ points: outline, isClosed: true });
+      }
+      return "Draw Skeleton Ink stroke";
+    }, undefined, true);
     this.canvasController.requestUpdate();
   }
 }
 
+class SkeletonInkPanel extends HTMLElement {
+  identifier = "skeleton-ink-panel";
+  iconPath = "";
+  constructor() {
+    super();
+    const root = this.attachShadow({ mode: "open" });
+    const sheet = document.createElement("style");
+    sheet.textContent = `
+      :host{display:block;height:100%;box-sizing:border-box;color:inherit;font:inherit}
+      .panel{padding:14px;display:grid;gap:14px}
+      h2{font-size:1.05em;margin:0}
+      label{display:grid;gap:5px;font-size:.9em}
+      input,select{width:100%;box-sizing:border-box}
+      .help{font-size:.85em;line-height:1.5;opacity:.8}
+    `;
+    root.appendChild(sheet);
+    const wrapper = document.createElement("div");
+    wrapper.className = "panel";
+    const heading = document.createElement("h2");
+    heading.textContent = "Skeleton Ink";
+    wrapper.appendChild(heading);
+
+    const fields = [
+      { key: "style", title: "Tool", type: "select",
+        items: [["broad","Broad nib"],["pointed","Pointed pen"],["brush","Brush"]] },
+      { key: "width", title: "Width", min: 2, max: 240, step: 1 },
+      { key: "angle", title: "Nib angle", min: 0, max: 180, step: 1 },
+      { key: "contrast", title: "Contrast", min: 0, max: 1.5, step: .05 }
+    ];
+    for (const field of fields) {
+      const label = document.createElement("label");
+      const title = document.createElement("span");
+      title.textContent = field.title + ": " + settings[field.key];
+      label.appendChild(title);
+      const control = document.createElement(field.type === "select" ? "select" : "input");
+      if (field.type === "select") {
+        for (const [value, name] of field.items) {
+          const option = document.createElement("option");
+          option.value = value; option.textContent = name;
+          control.appendChild(option);
+        }
+      } else {
+        control.type = "range";
+        control.min = field.min; control.max = field.max; control.step = field.step;
+      }
+      control.value = settings[field.key];
+      control.addEventListener("input", () => {
+        settings[field.key] = field.type === "select" ? control.value : +control.value;
+        title.textContent = field.title + ": " + settings[field.key];
+      });
+      label.appendChild(control);
+      wrapper.appendChild(label);
+    }
+    const help = document.createElement("div");
+    help.className = "help";
+    help.textContent = "Select Skeleton Ink in Fontra's top tool toolbar and drag in an editable glyph. The generated closed outline uses Fontra's normal point tools and undo. Skeleton nodes are not persistent yet.";
+    wrapper.appendChild(help);
+    root.appendChild(wrapper);
+  }
+}
+
 export function start(editorController, pluginPath) {
-  SkeletonInkPanel.prototype.iconPath = `${pluginPath}/icon.svg`;
-  customElements.define("skeleton-ink-panel", SkeletonInkPanel);
-  editorController.addSidebarPanel(new SkeletonInkPanel(editorController), "right");
-  const panel = editorController.getSidebarPanel("skeleton-ink-panel");
-  const tool = new SkeletonInkTool(editorController, panel.settings);
-  tool.iconPath = `${pluginPath}/icon.svg`;
-  editorController.addEditTool(tool);
+  console.info("[Skeleton Ink] Starting plugin", pluginPath);
+  if (!customElements.get("skeleton-ink-panel")) {
+    customElements.define("skeleton-ink-panel", SkeletonInkPanel);
+  }
+  const panel = new SkeletonInkPanel();
+  panel.iconPath = pluginPath + "/icon.svg";
+  editorController.addSidebarPanel(panel, "right");
+  editorController.addEditTool(new SkeletonInkTool(editorController, pluginPath + "/icon.svg"));
+  console.info("[Skeleton Ink] Toolbar tool and sidebar registered");
 }
