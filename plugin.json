@@ -1,0 +1,5 @@
+{
+  "name": "Skeleton Ink",
+  "init": "./start.js",
+  "function": "start"
+}
