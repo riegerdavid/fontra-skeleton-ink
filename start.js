@@ -1,3 +1,5 @@
+import { BaseTool } from "fontra/editor/edit-tools-base.js";
+import { VarPackedPath } from "fontra/core/var-path.js";
 import Panel from "fontra/editor/panel.js";
 import { div, button, label, input, select, option } from "fontra/core/html-utils.js";
 
@@ -179,8 +181,84 @@ class SkeletonInkPanel extends Panel {
   }
 }
 
+
+/**
+ * Draw directly into a Fontra glyph using Fontra's own tool interface.
+ * A single drag produces an editable, closed outline contour in the active glyph.
+ * The committed outline participates in Fontra selection, undo, and point tools.
+ */
+class SkeletonInkTool extends BaseTool {
+  identifier = "skeleton-ink-tool";
+  iconPath = "";
+
+  constructor(editor, settings) {
+    super(editor);
+    this.settings = settings;
+  }
+
+  setCursor() {
+    this.canvasController.canvas.style.cursor =
+      this.sceneModel.selectedGlyph?.isEditing ? "crosshair" : "default";
+  }
+
+  handleHover(event) {
+    if (!this.sceneModel.selectedGlyph?.isEditing) {
+      this.editor.tools["pointer-tool"].handleHover(event);
+      return;
+    }
+    this.setCursor();
+  }
+
+  async handleDrag(eventStream, initialEvent) {
+    if (!this.sceneModel.selectedGlyph?.isEditing) {
+      await this.editor.tools["pointer-tool"].handleDrag(eventStream, initialEvent);
+      return;
+    }
+    const first = this.sceneController.selectedGlyphPoint(initialEvent);
+    if (!Number.isFinite(first?.x) || !Number.isFinite(first?.y)) return;
+
+    const points = [first];
+    for await (const event of eventStream) {
+      const p = this.sceneController.selectedGlyphPoint(event);
+      if (!Number.isFinite(p?.x) || !Number.isFinite(p?.y)) continue;
+      const previous = points[points.length - 1];
+      if (Math.hypot(p.x - previous.x, p.y - previous.y) >= 2) points.push(p);
+    }
+    if (points.length < 2) return;
+
+    const { width, angle, contrast, style } = { ...this.settings };
+    const contourPoints = pointsToOutline(points, width, angle, contrast, style);
+    if (contourPoints.length < 4) return;
+    const path = VarPackedPath.fromUnpackedContours([
+      { points: contourPoints.map(p => ({ x: Math.round(p.x), y: Math.round(p.y) })),
+        isClosed: true }
+    ]);
+
+    await this.sceneController.editGlyphAndRecordChanges(
+      glyph => {
+        const layers = this.sceneController.getEditingLayerFromGlyphLayers(glyph.layers);
+        const firstLayer = Object.values(layers)[0];
+        if (!firstLayer) return;
+        const start = firstLayer.path.numPoints;
+        this.sceneController.selection = new Set(
+          contourPoints.map((_, i) => `point/${start + i}`)
+        );
+        for (const layer of Object.values(layers)) layer.path.appendPath(path);
+        return "Draw Skeleton Ink outline";
+      },
+      undefined,
+      true
+    );
+    this.canvasController.requestUpdate();
+  }
+}
+
 export function start(editorController, pluginPath) {
   SkeletonInkPanel.prototype.iconPath = `${pluginPath}/icon.svg`;
   customElements.define("skeleton-ink-panel", SkeletonInkPanel);
   editorController.addSidebarPanel(new SkeletonInkPanel(editorController), "right");
+  const panel = editorController.getSidebarPanel("skeleton-ink-panel");
+  const tool = new SkeletonInkTool(editorController, panel.settings);
+  tool.iconPath = `${pluginPath}/icon.svg`;
+  editorController.addEditTool(tool);
 }
