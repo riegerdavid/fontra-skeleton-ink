@@ -1,24 +1,32 @@
 # Skeleton Ink for Fontra
 
-Experimental, independent skeleton-based calligraphic drawing **prototype** for Fontra.
+Experimental native glyph-canvas calligraphy tool for Fontra.
 
-## Features
-- Draw centerline strokes in a sidebar canvas
-- Broad nib, pointed pen, and brush-like outline previews
-- Width, nib angle, and contrast controls
-- Undo last stroke / clear all
-- Export outlines as SVG
+## What works
 
-**Limitations:** The exported outline is an approximation of stroke expansion. This version does **not** insert contours into the active Fontra glyph, and has not been runtime-tested on Fontra 2026.10.2. It is not a feature-complete recreation of LTTR/INK.
+- **Skeleton Ink toolbar tool:** Select it in Fontra's main glyph editor toolbar, then drag on the **glyph canvas**. The drawn centerline is expanded into a closed outline and inserted into the current glyph.
+- **Native outline editing:** The generated outline is a normal Fontra contour. Select it with Fontra's pointer/point tools, move nodes, edit outlines, and use Fontra undo.
+- **Controls:** Open the Skeleton Ink sidebar panel to choose broad nib, pointed pen, or brush-like stroke expansion; change width, angle and contrast. Settings apply to subsequent glyph-canvas strokes.
+- **Sidebar prototype:** The original separate sketch canvas and SVG export remain available.
 
-## Installation
-In Fontra's Plugin Manager, add the GitHub repository:
+## Install
+
+In Fontra Plugin Manager, install this GitHub repository:
+
 `riegerdavid/fontra-skeleton-ink`
 
-Enable the plugin and reload Fontra if prompted. Open the Skeleton Ink sidebar panel.
+Reload the editor if requested. Open a glyph in edit mode, select **Skeleton Ink** in the glyph-editor tool toolbar, and drag to create a contour. The right sidebar contains pen settings.
 
-## Development
-The root `plugin.json` identifies `start.js` as the plugin entry point. The sidebar setup follows the structure of Fontra's reference-font plugin.
+## Important limitations
+
+This is an **experimental implementation**; it has not been runtime-tested in Fontra 2026.10.2.
+
+- The centerline currently becomes a **baked contour** after the drag. Fontra's standard tools edit the resulting outline points, **not a persistent skeleton**.
+- Changing nib settings does not recompute an existing contour.
+- The implementation uses straight polygon segments, so curves may be rough.
+- There is no live stroke preview during dragging yet.
+- This is not a full recreation of LTTR/INK.
 
 ## License
-MIT. Independent implementation; not affiliated with LTTR/INK.
+
+MIT. Independent implementation, not affiliated with LTTR/INK.
