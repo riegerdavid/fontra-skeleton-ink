@@ -59,12 +59,14 @@ class SkeletonInkPanel extends Panel {
 
   constructor(editorController) {
     super(editorController);
-    this.strokes = [];
-    this.active = null;
-    this.settings = { style:"broad", width:80, angle:35, contrast:0.7 };
   }
 
   getContentElement() {
+    // Panel's super() invokes getContentElement() before this constructor runs.
+    // Initialize state here so the panel and tool can load successfully.
+    this.strokes = [];
+    this.active = null;
+    this.settings = { style:"broad", width:80, angle:35, contrast:0.7 };
     const styleSelect = select({ onchange:e=>{ this.settings.style=e.target.value; this.render(); } }, [
       option({ value:"broad", selected:true }, ["Broad nib"]),
       option({ value:"pointed" }, ["Pointed pen"]),
